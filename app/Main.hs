@@ -11,36 +11,42 @@ import Discord
 import Discord.Types
 import qualified Discord.Requests as R
 
-import System.IO (stderr)
-import Control.Monad (when, void)
+import Control.Monad (void)
 
 import Data.Word
 import Data.Char (GeneralCategory(..), generalCategory)
 
 import Data.Bifunctor
 
-import Debug.Trace
+import GHC.Generics
+import Data.Aeson
+
+import System.Exit
 
 data Config = MkConfig
-  { hatGuyConfig :: HatGuyConfig }
+  { hatGuy :: HatGuyConfig
+  , token  :: Text
+  } deriving Generic
 
 data HatGuyConfig = MkHatGuyConfig
   { hatGuyUserId   :: UserId
   , hatGuyResponse :: Text
-  }
+  } deriving Generic
+
+instance FromJSON Config
+instance FromJSON HatGuyConfig
 
 main :: IO ()
 main = do
-  -- TODO error handling
-  token        <- T.strip <$> TIO.readFile "config/token.secret"
-  hatGuyConfig <- MkHatGuyConfig <$> (mkId . read . T.unpack . T.strip <$> TIO.readFile "config/hat_guy")
-                                 <*> (TIO.readFile "config/response")
-  fatalError   <- runBot token (MkConfig hatGuyConfig)
-  TIO.hPutStrLn stderr fatalError
-  -- TODO exit with non-zero
+  conf  <- eitherDecodeFileStrict "config/config.json"
+  case conf of
+    Left err -> die err
+    Right ok -> do 
+      fatalError <- runBot ok
+      die (T.unpack fatalError)
 
-runBot :: Text -> Config -> IO Text
-runBot token config = runDiscord $ RunDiscordOpts
+runBot :: Config -> IO Text
+runBot (MkConfig config token) = runDiscord $ RunDiscordOpts
   { discordToken               = token
   , discordOnStart             = pure ()
   , discordOnEnd               = pure ()
@@ -54,24 +60,32 @@ runBot token config = runDiscord $ RunDiscordOpts
 writeLog :: Text -> IO ()
 writeLog = TIO.putStrLn
 
-handleEvent :: Config -> Event -> DiscordHandler ()
-handleEvent (MkConfig (MkHatGuyConfig hatGuy response)) = \case
-  MessageCreate m -> when (shouldRespondToHatGuy hatGuy m) (respond m response)
+handleEvent :: HatGuyConfig -> Event -> DiscordHandler ()
+handleEvent (MkHatGuyConfig hatGuy response) = \case
+  MessageCreate m 
+    | Just emoji <- shouldRespondToHatGuy hatGuy m -> respond m (replaceAll emoji (mention hatGuy) response)
   _ -> pure ()
+
+mention :: UserId -> Text
+mention uid = T.concat ["<@", T.pack (show uid), ">"]
+
+replaceAll :: Text -> Text -> Text -> Text
+replaceAll emoji author text = T.replace "{emoji}" emoji (T.replace "{mention}" author text)
 
 respond :: Message -> Text -> DiscordHandler ()
 respond m = void . restCall . R.CreateMessage (messageChannelId m)
 
-shouldRespondToHatGuy :: UserId -> Message -> Bool
-shouldRespondToHatGuy hatGuy message =
-  userId (messageAuthor message) == hatGuy &&
-  isLikelyHatDraw (messageContent message)
+shouldRespondToHatGuy :: UserId -> Message -> Maybe Text
+shouldRespondToHatGuy hatGuy message
+  | userId (messageAuthor message) == hatGuy = isLikelyHatDraw (messageContent message)
+  | otherwise = Nothing
 
-isLikelyHatDraw :: Text -> Bool
+isLikelyHatDraw :: Text -> Maybe Text
 isLikelyHatDraw text
-  | Just (x, xs)    <- traceShowId (getFirstEmoji text)
-  , Just in_between <- findBetween x xs = T.toLower in_between == "next"
-  | otherwise = False
+  | Just (x, xs)    <- getFirstEmoji text
+  , Just in_between <- findBetween x xs 
+  , "next" `T.isInfixOf` T.toLower in_between = Just x
+  | otherwise = Nothing
 
 findBetween :: Text -> Text -> Maybe Text
 findBetween emoji text
@@ -85,7 +99,7 @@ getFirstEmoji text = T.uncons rest >>= getEmoji
     (_, rest) = T.break (\c -> isUnicodeEmoji c || c == '<') text
 
     getEmoji ('<', _) = getUntilClosing rest
-    getEmoji (c,  re) = Just (T.singleton c, re)
+    getEmoji _ = Just $ T.span isUnicodeEmoji rest
 
 getUntilClosing :: Text -> Maybe (Text, Text)
 getUntilClosing text = 
@@ -93,7 +107,7 @@ getUntilClosing text =
   in  first (T.snoc inside) <$> T.uncons rest
 
 isUnicodeEmoji :: Char -> Bool
-isUnicodeEmoji c = generalCategory c == OtherSymbol
+isUnicodeEmoji c = generalCategory c `elem` [OtherSymbol, NonSpacingMark]
 
 mkId :: Word64 -> UserId
 mkId = DiscordId . Snowflake
