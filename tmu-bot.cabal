@@ -15,6 +15,12 @@ common warnings
 executable tmu-bot
     import:           warnings
     main-is:          Main.hs
-    build-depends:    base ^>=4.19.1.0, discord-haskell, text, transformers, aeson
+    build-depends:    base ^>=4.19.1.0,
+                      aeson >= 2.2.3 && < 2.3,
+                      transformers >= 0.6.1 && < 0.7,
+                      filepath >= 1.4.200 && < 1.5,
+                      text >= 2.1.1 && < 2.2,
+                      discord-haskell >= 1.17.0 && < 1.18,
+                      xdg-basedir >= 0.2.2 && < 0.3,
     hs-source-dirs:   app
     default-language: GHC2021

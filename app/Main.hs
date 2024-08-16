@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main where
+module Main (main) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -23,6 +23,10 @@ import Data.Aeson
 
 import System.Exit
 
+import System.Environment.XDG.BaseDir
+import System.FilePath
+import Control.Monad.IO.Class
+
 data Config = MkConfig
   { hatGuy :: HatGuyConfig
   , token  :: Text
@@ -36,14 +40,22 @@ data HatGuyConfig = MkHatGuyConfig
 instance FromJSON Config
 instance FromJSON HatGuyConfig
 
+info :: MonadIO m => String -> m ()
+info = liftIO . putStrLn
+
 main :: IO ()
 main = do
-  conf  <- eitherDecodeFileStrict "config/config.json"
+  info "starting bot"
+  conf_dir <- getUserConfigDir "tmu-bot"
+  let conf_file = conf_dir </> "config.json"
+  conf  <- eitherDecodeFileStrict conf_file
   case conf of
     Left err -> die err
-    Right ok -> do 
+    Right ok -> do
+      info $ "loaded config file: " ++ conf_file
       fatalError <- runBot ok
       die (T.unpack fatalError)
+
 
 runBot :: Config -> IO Text
 runBot (MkConfig config token) = runDiscord $ RunDiscordOpts
@@ -51,19 +63,18 @@ runBot (MkConfig config token) = runDiscord $ RunDiscordOpts
   , discordOnStart             = pure ()
   , discordOnEnd               = pure ()
   , discordOnEvent             = handleEvent config
-  , discordOnLog               = writeLog
+  , discordOnLog               = TIO.putStrLn
   , discordGatewayIntent       = def
   , discordForkThreadForEvents = False
   , discordEnableCache         = False
   }
 
-writeLog :: Text -> IO ()
-writeLog = TIO.putStrLn
-
 handleEvent :: HatGuyConfig -> Event -> DiscordHandler ()
 handleEvent (MkHatGuyConfig hatGuy response) = \case
-  MessageCreate m 
-    | Just emoji <- shouldRespondToHatGuy hatGuy m -> respond m (replaceAll emoji (mention hatGuy) response)
+  MessageCreate m
+    | Just emoji <- shouldRespondToHatGuy hatGuy m -> do
+        info "responding to hat-guy"
+        respond m (replaceAll emoji (mention hatGuy) response)
   _ -> pure ()
 
 mention :: UserId -> Text
@@ -108,6 +119,3 @@ getUntilClosing text =
 
 isUnicodeEmoji :: Char -> Bool
 isUnicodeEmoji c = generalCategory c `elem` [OtherSymbol, NonSpacingMark]
-
-mkId :: Word64 -> UserId
-mkId = DiscordId . Snowflake
