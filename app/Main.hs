@@ -17,6 +17,10 @@ import Control.Monad (when, void)
 import Data.Word
 import Data.Char (GeneralCategory(..), generalCategory)
 
+import Data.Bifunctor
+
+import Debug.Trace
+
 data Config = MkConfig
   { hatGuyConfig :: HatGuyConfig }
 
@@ -65,19 +69,28 @@ shouldRespondToHatGuy hatGuy message =
 
 isLikelyHatDraw :: Text -> Bool
 isLikelyHatDraw text
-  | Just (x, xs) <- getFirstEmoji text
-    = not $ T.null (findBetweenChar x xs)
+  | Just (x, xs)    <- traceShowId (getFirstEmoji text)
+  , Just in_between <- findBetween x xs = T.toLower in_between == "next"
   | otherwise = False
 
-findBetweenChar :: Char -> Text -> Text
-findBetweenChar char text = 
-  let (between, _) = T.break (== char) text
-  in  T.strip between
+findBetween :: Text -> Text -> Maybe Text
+findBetween emoji text
+  | T.null end  = Nothing
+  | otherwise = Just $ T.strip between
+  where (between, end) = T.breakOn emoji text
 
-getFirstEmoji :: Text -> Maybe (Char, Text)
-getFirstEmoji text = T.uncons rest
+getFirstEmoji :: Text -> Maybe (Text, Text)
+getFirstEmoji text = T.uncons rest >>= getEmoji
   where
-    (_, rest) = T.break isUnicodeEmoji text
+    (_, rest) = T.break (\c -> isUnicodeEmoji c || c == '<') text
+
+    getEmoji ('<', _) = getUntilClosing rest
+    getEmoji (c,  re) = Just (T.singleton c, re)
+
+getUntilClosing :: Text -> Maybe (Text, Text)
+getUntilClosing text = 
+  let (inside, rest) = T.break (== '>') text
+  in  first (T.snoc inside) <$> T.uncons rest
 
 isUnicodeEmoji :: Char -> Bool
 isUnicodeEmoji c = generalCategory c == OtherSymbol
