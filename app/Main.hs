@@ -17,23 +17,30 @@ import Control.Monad (when, void)
 import Data.Word
 import Data.Char (GeneralCategory(..), generalCategory)
 
+data Config = MkConfig
+  { hatGuyConfig :: HatGuyConfig }
+
+data HatGuyConfig = MkHatGuyConfig
+  { hatGuyUserId   :: UserId
+  , hatGuyResponse :: Text
+  }
+
 main :: IO ()
 main = do
   -- TODO error handling
-  -- TODO state ADT
-  token    <- T.strip <$> TIO.readFile "config/token"
-  response <- TIO.readFile "config/response"
-  hatGuy   <- mkId . read . T.unpack . T.strip <$> TIO.readFile "config/hat_guy"
-  fatalError <- runBot token response hatGuy
+  token        <- T.strip <$> TIO.readFile "config/token.secret"
+  hatGuyConfig <- MkHatGuyConfig <$> (mkId . read . T.unpack . T.strip <$> TIO.readFile "config/hat_guy")
+                                 <*> (TIO.readFile "config/response")
+  fatalError   <- runBot token (MkConfig hatGuyConfig)
   TIO.hPutStrLn stderr fatalError
   -- TODO exit with non-zero
 
-runBot :: Text -> Text -> UserId -> IO Text
-runBot token response hatGuy = runDiscord $ RunDiscordOpts
+runBot :: Text -> Config -> IO Text
+runBot token config = runDiscord $ RunDiscordOpts
   { discordToken               = token
   , discordOnStart             = pure ()
   , discordOnEnd               = pure ()
-  , discordOnEvent             = handleEvent response hatGuy
+  , discordOnEvent             = handleEvent config
   , discordOnLog               = writeLog
   , discordGatewayIntent       = def
   , discordForkThreadForEvents = False
@@ -43,11 +50,13 @@ runBot token response hatGuy = runDiscord $ RunDiscordOpts
 writeLog :: Text -> IO ()
 writeLog = TIO.putStrLn
 
-handleEvent :: Text -> UserId -> Event -> DiscordHandler ()
-handleEvent response hatGuy = \case
-  MessageCreate m -> when (shouldRespondToHatGuy hatGuy m) $ do
-        void $ restCall (R.CreateMessage (messageChannelId m) response)
+handleEvent :: Config -> Event -> DiscordHandler ()
+handleEvent (MkConfig (MkHatGuyConfig hatGuy response)) = \case
+  MessageCreate m -> when (shouldRespondToHatGuy hatGuy m) (respond m response)
   _ -> pure ()
+
+respond :: Message -> Text -> DiscordHandler ()
+respond m = void . restCall . R.CreateMessage (messageChannelId m)
 
 shouldRespondToHatGuy :: UserId -> Message -> Bool
 shouldRespondToHatGuy hatGuy message =
@@ -56,16 +65,22 @@ shouldRespondToHatGuy hatGuy message =
 
 isLikelyHatDraw :: Text -> Bool
 isLikelyHatDraw text
-  | Just (x, xs) <- T.uncons rest
-  , Just _ <- T.uncons (T.stripStart . snd $ T.break (== x) xs) = True
+  | Just (x, xs) <- getFirstEmoji text
+    = not $ T.null (findBetweenChar x xs)
   | otherwise = False
-  where (_, rest) = T.break isUnicodeEmoji text
+
+findBetweenChar :: Char -> Text -> Text
+findBetweenChar char text = 
+  let (between, _) = T.break (== char) text
+  in  T.strip between
+
+getFirstEmoji :: Text -> Maybe (Char, Text)
+getFirstEmoji text = T.uncons rest
+  where
+    (_, rest) = T.break isUnicodeEmoji text
 
 isUnicodeEmoji :: Char -> Bool
 isUnicodeEmoji c = generalCategory c == OtherSymbol
-
-fromBot :: Message -> Bool
-fromBot = userIsBot . messageAuthor
 
 mkId :: Word64 -> UserId
 mkId = DiscordId . Snowflake
