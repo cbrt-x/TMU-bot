@@ -26,6 +26,7 @@ import System.Exit
 import System.Environment.XDG.BaseDir
 import System.FilePath
 import Control.Monad.IO.Class
+import System.IO
 
 data Config = MkConfig
   { hatGuy :: HatGuyConfig
@@ -40,21 +41,32 @@ data HatGuyConfig = MkHatGuyConfig
 instance FromJSON Config
 instance FromJSON HatGuyConfig
 
-info :: MonadIO m => String -> m ()
-info = liftIO . putStrLn
+data LogLevel = LogInfo | LogError
+
+logMsg :: MonadIO m => LogLevel -> String -> m ()
+logMsg ll str = liftIO $ hPutStrLn hdl (concat ["[", llPpr, "] ", str])
+  where
+    llPpr = case ll of
+      LogInfo -> "INFO"
+      LogError -> "ERROR"
+    hdl = case ll of
+      LogError -> stderr
+      _        -> stdout
+
 
 main :: IO ()
 main = do
-  info "starting bot"
+  logMsg LogInfo "starting bot"
   conf_dir <- getUserConfigDir "tmu-bot"
   let conf_file = conf_dir </> "config.json"
+  logMsg LogInfo $ "attempting to load config from: " ++ conf_file
   conf  <- eitherDecodeFileStrict conf_file
   case conf of
-    Left err -> die err
+    Left err -> logMsg LogError err
     Right ok -> do
-      info $ "loaded config file: " ++ conf_file
+      logMsg LogInfo "successfully loaded config"
       fatalError <- runBot ok
-      die (T.unpack fatalError)
+      logMsg LogError (T.unpack fatalError)
 
 
 runBot :: Config -> IO Text
@@ -73,7 +85,7 @@ handleEvent :: HatGuyConfig -> Event -> DiscordHandler ()
 handleEvent (MkHatGuyConfig hatGuy response) = \case
   MessageCreate m
     | Just emoji <- shouldRespondToHatGuy hatGuy m -> do
-        info "responding to hat-guy"
+        logMsg LogInfo "responding to hat-guy"
         respond m (replaceAll emoji (mention hatGuy) response)
   _ -> pure ()
 
