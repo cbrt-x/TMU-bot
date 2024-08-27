@@ -9,28 +9,41 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 
 import Discord
+    ( restCall,
+      runDiscord,
+      FromJSON,
+      def,
+      DiscordHandler,
+      RestCallErrorCode(RestCallErrorCode),
+      RunDiscordOpts(discordEnableCache, RunDiscordOpts, discordToken,
+                     discordOnStart, discordOnEnd, discordOnEvent, discordOnLog,
+                     discordGatewayIntent, discordForkThreadForEvents) )
 import Discord.Types
+    ( Event(MessageUpdate, MessageCreate),
+      User(userId),
+      Message(messageContent, messageId, messageChannelId,
+              messageAuthor),
+      MessageReference(referenceMessageId),
+      UserId )
 import qualified Discord.Requests as R
 
 import Control.Monad (void)
 
-import Data.Word
-import Data.Function
-import Data.Maybe
+import Data.Function ( applyWhen )
+import Data.Maybe ( fromMaybe )
 
 import Data.Char (GeneralCategory(..), generalCategory)
 
-import Data.Bifunctor
+import Data.Bifunctor ( Bifunctor(first) )
 
-import GHC.Generics
-import Data.Aeson
+import GHC.Generics ( Generic )
+import Data.Aeson ( eitherDecodeFileStrict )
 
-import System.Exit
 
-import System.Environment.XDG.BaseDir
-import System.FilePath
-import Control.Monad.IO.Class
-import System.IO
+import System.Environment.XDG.BaseDir ( getUserConfigDir )
+import System.FilePath ( (</>) )
+import Control.Monad.IO.Class ( MonadIO(..) )
+import System.IO ( Handle, stdout, hPutStrLn, stderr )
 
 data Config = MkConfig
   { hatGuy :: HatGuyConfig
@@ -138,8 +151,9 @@ isLikelyHatDraw :: Text -> Maybe Text
 isLikelyHatDraw text
   | Just (x, xs)    <- getFirstEmoji text
   , Just in_between <- findBetween x xs 
-  , "next" `T.isInfixOf` T.toLower in_between = Just x
+  , in_between `containsAnyOf` [ "next", "band" ] = Just x
   | otherwise = Nothing
+  where containsAnyOf haystack = any (`T.isInfixOf` haystack)
 
 findBetween :: Text -> Text -> Maybe Text
 findBetween emoji text
