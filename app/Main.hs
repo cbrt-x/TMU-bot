@@ -149,17 +149,16 @@ shouldRespondToHatGuy hatGuy message
 
 isLikelyHatDraw :: Text -> Maybe Text
 isLikelyHatDraw text
-  | Just (x, xs)    <- getFirstEmoji text
-  , Just in_between <- findBetween x xs 
-  , in_between `containsAnyOf` [ "next", "band" ] = Just x
+  | Just emoji <- findEmoji text
+  , text `containsAnyOf` [ "next", "band" ] = Just emoji
   | otherwise = Nothing
   where containsAnyOf haystack = any (`T.isInfixOf` haystack)
 
-findBetween :: Text -> Text -> Maybe Text
-findBetween emoji text
-  | T.null end  = Nothing
-  | otherwise = Just $ T.strip between
-  where (between, end) = T.breakOn emoji text
+findEmoji :: Text -> Maybe Text
+findEmoji text
+  | Just (x, xs)    <- getFirstEmoji text
+  , x `T.isInfixOf` xs = Just x
+  | otherwise = Nothing
 
 getFirstEmoji :: Text -> Maybe (Text, Text)
 getFirstEmoji text = T.uncons rest >>= getEmoji
